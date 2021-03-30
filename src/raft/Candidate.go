@@ -88,6 +88,7 @@ func (m *Candidate) CallBack() {
 			m.raft.PrintInfo("Find a newer term")
 			m.raft.State = NewFollower(m.raft,HEARTBEATMIN,HEARTBEATMAX).SetCurrentTerm(m.NewestTerm).SetVoteFor(-1)
 			m.raft.PrintInfo("ID :",m.raft.me," become a follower.","term of ID:",m.raft.me,":",m.raft.currentTerm)
+			m.raft.persist()
 
 		}else if m.MustWin(){
 			m.raft.PrintInfo("Win")
@@ -96,7 +97,6 @@ func (m *Candidate) CallBack() {
 
 			m.raft.PrintInfo("Lost,ID: ",m.raft.me," try a new selection.")
 			m.raft.State = NewCandidate(m.raft)
-
 		}
 	}else{
 		m.raft.PrintInfo("ID: ",m.raft.me," changed from candidate to follower.")
@@ -114,13 +114,6 @@ func NewCandidate(raft *Raft) *Candidate{
 		NegVotes: 0,
 		termNewerThanMe:false,
 		NewestTerm : raft.currentTerm,
-		/*
-		RequestVotes: &RequestVote{
-			RepliesList : make([]*RequestVoteReply,raft.peerNum),
-			CallCount:0,
-		},
-
-		 */
 	}
 	Candidate.raft.tasksQueue = make([]Entries,0)
 

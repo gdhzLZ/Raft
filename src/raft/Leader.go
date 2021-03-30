@@ -132,7 +132,7 @@ func (m *Leader) Job(){
 	m.UpdateCommitIndex()
 	m.raft.PrintInfo("SafeReplicationCount ",m.SafeReplicationCount," m.raft.commitIndex ",m.raft.commitIndex)
 	m.UpdateLog()
-
+	m.raft.persist()
 	currentTerm:=m.raft.currentTerm
 	CandidateId := m.raft.me
 	m.raft.mu.Unlock()
@@ -154,6 +154,7 @@ func (m *Leader) Job(){
 					m.ComputingTermNewerThanMe(&AppendEntriesReply)
 					if m.HasNewerTermServer(){
 						m.raft.State = NewFollower(m.raft,HEARTBEATMIN,HEARTBEATMAX).SetVoteFor(-1).SetCurrentTerm(AppendEntriesReply.Term)
+						m.raft.persist()
 						m.raft.PrintInfo("Leader ID :",m.raft.me,"  changed to a follower. ")
 						return
 					}else{

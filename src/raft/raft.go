@@ -18,14 +18,15 @@ package raft
 //
 
 import (
+	"bytes"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
 import "sync/atomic"
 import "../labrpc"
-
-// import "bytes"
-// import "../labgob"
+import "../labgob"
 
 
 
@@ -123,12 +124,13 @@ func (rf *Raft) isLogLatestThanMe(args *RequestVoteArgs) bool{
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode( strconv.Itoa(rf.currentTerm))
+	e.Encode(rf.voteFor)
+	e.Encode(rf.log)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 
@@ -139,19 +141,22 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm string
+	var voteFor  int
+	var log []Entries
+	if d.Decode(&currentTerm) != nil ||
+	d.Decode(&voteFor) != nil ||
+		d.Decode(&log) != nil{
+	os.Exit(-1)
+	} else {
+		rf.log = log
+		rf.currentTerm,_ = strconv.Atoi(currentTerm)
+	    rf.voteFor = voteFor
+	}
 }
 
 //
@@ -205,10 +210,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 		if rf.currentTerm < args.CandidateTerm{
 			rf.State = NewFollower(rf,HEARTBEATMIN,HEARTBEATMAX).SetVoteFor(-1).SetCurrentTerm(args.CandidateTerm)
+			rf.persist()
 		}
 		reply.Term = rf.currentTerm
 	} else{
 		rf.State = NewFollower(rf,HEARTBEATMIN,HEARTBEATMAX).ChangeIsReceiveHeartBeat(true).SetCurrentTerm(args.CandidateTerm).SetVoteFor(args.CandidateId)
+		rf.persist()
 		reply.VoteGranted = true
 		reply.Term = args.CandidateTerm
 		rf.PrintInfo("ID :",rf.me," become a follower.","term of ID:",rf.me,":",rf.currentTerm)
@@ -262,6 +269,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Term = rf.currentTerm
 		if rf.IsConsistency(args.PrevLogIndex,args.PrevLogTerm){
 			rf.UpdateLog(args.PrevLogIndex,args.Entries)
+			rf.persist()
 			rf.CommitEntries(args.LeaderCommit)
 			reply.Success = true
 			reply.MyCommitIndex = rf.returnLastLogIndex()
@@ -479,6 +487,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	go TryApply(applyCh,rf)
 	// Your initialization code here (2A, 2B, 2C).
 	// initialize from state persisted before a crash
+	//rf.persist()
 	rf.readPersist(persister.ReadRaftState())
 	return rf
 }

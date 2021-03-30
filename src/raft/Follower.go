@@ -87,7 +87,9 @@ func (m *Follower) Job(){
 	if 	!m.raft.IsReceiveHeartBeat(){  // it could be a candidate,做这个判断是怕在wait到这里的这个时间段 follower收到了heartbeat
 		m = m.SetVoteFor( m.raft.me)
 		m.raft.State = NewCandidate(m.raft)
+		m.raft.persist()
 	} else{
+
 		m.raft.PrintInfo("ID: " ,m.raft.me ," receive a heartBeat.")
 		m.ChangeIsReceiveHeartBeat(false)
 	}
