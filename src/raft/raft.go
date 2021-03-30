@@ -200,10 +200,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.PrintInfo("ID: ",rf.me," wants to vote to ",args.CandidateId)
 	rf.mu.Lock()
+	defer 	rf.mu.Unlock()
 	if rf.isTermNotLatestThanMe(args) ||rf.isVoteForOtherPeer(args) || !rf.isLogLatestThanMe(args) {  // "=" 表示我自己是candidate,我投给了我自己    或者我已经投票给了和你平级的竞争者
 		reply.VoteGranted = false
 		if rf.currentTerm < args.CandidateTerm{
-			rf.currentTerm = args.CandidateTerm
+			rf.State = NewFollower(rf,HEARTBEATMIN,HEARTBEATMAX).SetVoteFor(-1).SetCurrentTerm(args.CandidateTerm)
 		}
 		reply.Term = rf.currentTerm
 	} else{
@@ -212,7 +213,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.Term = args.CandidateTerm
 		rf.PrintInfo("ID :",rf.me," become a follower.","term of ID:",rf.me,":",rf.currentTerm)
 	}
-	rf.mu.Unlock()
 	rf.PrintInfo("ID: ",rf.me,"  voting  to ", args.CandidateId, " finished.")
 
 
@@ -455,7 +455,7 @@ func TryApply(applyCh chan ApplyMsg,rf *Raft){
 		if !rf.IsAlive(){
 			break
 		}
-		time.Sleep(200*time.Millisecond)
+		time.Sleep(10*time.Millisecond)
 		rf.mu.Lock()
 
 		if rf.lastApplied < rf.commitIndex{
