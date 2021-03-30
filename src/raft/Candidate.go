@@ -158,15 +158,12 @@ func (m *Candidate) Job(){
 				if ok{
 					//m.RequestVotes.RepliesList[peer] = &RequestVotesReply
 					m.ComputingTermNewerThanMe(&RequestVotesReply)
-
 				}
 				m.raft.Cond.Broadcast()
 				m.raft.Cond.L.Unlock()
 			}(peer)
 		}
 	}
-	//m.Wait()
-	//m.WaitToSendRequestVote()
 
 	m.CallBack()
 

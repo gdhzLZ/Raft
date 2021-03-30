@@ -82,7 +82,6 @@ type Raft struct {
 	commitIndex int
 	lastApplied int
 	voteFor		int
-	hasVoted	bool
 	Cond		*sync.Cond
 	hasReceiveHeartBeat bool
 	State State  // 接口本身就是引用类型，所以不用加*
@@ -191,23 +190,27 @@ func (rf *Raft) returnLastLogIndex() int{
 	return len(rf.log)-1
 
 }
-
+func (rf *Raft) isTermNotLatestThanMe(args *RequestVoteArgs) bool{
+	return args.CandidateTerm < rf.currentTerm
+}
+func(rf* Raft) isVoteForOtherPeer(args *RequestVoteArgs) bool{
+	return args.CandidateTerm == rf.currentTerm && args.CandidateId != rf.voteFor
+}
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.PrintInfo("ID: ",rf.me," wants to vote to ",args.CandidateId)
 	rf.mu.Lock()
-	if args.CandidateTerm < rf.currentTerm ||(args.CandidateTerm == rf.currentTerm && args.CandidateId != rf.voteFor) || !rf.isLogLatestThanMe(args) {  // "=" 表示我自己是candidate,我投给了我自己    或者我已经投票给了和你平级的竞争者
+	if rf.isTermNotLatestThanMe(args) ||rf.isVoteForOtherPeer(args) || !rf.isLogLatestThanMe(args) {  // "=" 表示我自己是candidate,我投给了我自己    或者我已经投票给了和你平级的竞争者
 		reply.VoteGranted = false
 		if rf.currentTerm < args.CandidateTerm{
 			rf.currentTerm = args.CandidateTerm
 		}
 		reply.Term = rf.currentTerm
 	} else{
-		rf.State = NewFollower(rf,HEARTBEATMIN,HEARTBEATMAX).ChangeHasVoted(true).SetCurrentTerm(args.CandidateTerm).SetVoteFor(args.CandidateId)
+		rf.State = NewFollower(rf,HEARTBEATMIN,HEARTBEATMAX).ChangeIsReceiveHeartBeat(true).SetCurrentTerm(args.CandidateTerm).SetVoteFor(args.CandidateId)
 		reply.VoteGranted = true
 		reply.Term = args.CandidateTerm
 		rf.PrintInfo("ID :",rf.me," become a follower.","term of ID:",rf.me,":",rf.currentTerm)
-
 	}
 	rf.mu.Unlock()
 	rf.PrintInfo("ID: ",rf.me,"  voting  to ", args.CandidateId, " finished.")
@@ -348,15 +351,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Term: rf.currentTerm,
 			Command: command,
 		}
-		//rf.taskQueueMu.Lock()
 		rf.tasksQueue = append(rf.tasksQueue,entry)
-		//rf.taskQueueMu.Lock()
-		//rf.log = append(rf.log,entry )
-		return rf.returnLastLogIndex()+rf.taskNumsNotDone(),rf.currentTerm,true
+		commandIndex := rf.returnLastLogIndex()+rf.taskNumsNotDone()
+		return commandIndex,rf.currentTerm,true
 	}
-
-	// Your code here (2B).
-
 
 
 }
@@ -407,21 +405,12 @@ func (rf *Raft) IsAlive()bool{
 	return !rf.killed()
 }
 
-func(rf *Raft) HasVoted()bool{
-	return rf.hasVoted
-}
+
 
 func Run( rf *Raft){
 	for rf.IsAlive(){
-		rf.mu.Lock()
-
 		rf.PrintInfo("My type: ",rf.State.MyType(),"do this job circularly. ID: ", rf.me," term:",rf.currentTerm,"Log: ",rf.log," queue ",rf.tasksQueue,"commitIndex: ",rf.commitIndex," applyindex: ",rf.lastApplied)
-		rf.PrintInfo("------------------------")
-
-
-
-
-
+		rf.mu.Lock()
 		rf.State.Job()
 		rf.mu.Unlock()
 
@@ -446,7 +435,6 @@ func InitAServer(peers []*labrpc.ClientEnd, me int,
 		Alive : make([]bool,len(peers)),
 		peerNum: len(peers),
 		currentTerm:0,
-		hasVoted: false,
 		voteFor: -1,
 		commitIndex:0,
 		lastApplied: 0,

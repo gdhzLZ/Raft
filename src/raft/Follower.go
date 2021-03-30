@@ -39,12 +39,9 @@ func (m *Follower) WaitHeartBeat() {
 	CheckCount := HeartBeatDur/CheckDur
 	for i := 0; i < CheckCount ; i++{
 		time.Sleep(time.Millisecond*time.Duration(CheckDur))
-		//m.raft.mu.Lock()
-		if m.raft.IsReceiveHeartBeat() == true || m.raft.HasVoted() == true{
-		//	m.raft.mu.Unlock()
+		if m.raft.IsReceiveHeartBeat() == true{
 			return
 		}
-		//m.raft.mu.Unlock()
 	}
 
 }
@@ -53,10 +50,7 @@ func (m *Follower)  SetWaitHeartBeatTime(min int,max int){
 	m.WaitHeartBeatMax = max
 	m.WaitHeartBeatMin = min
 }
-func (m *Follower) ChangeHasVoted(hasVoted bool) *Follower{
-	m.raft.hasVoted = hasVoted
-	return m
-}
+
 
 func (m *Follower) ChangeIsReceiveHeartBeat(hasReceiveHeartBeat bool) *Follower{
 	m.raft.hasReceiveHeartBeat = hasReceiveHeartBeat
@@ -87,14 +81,14 @@ func NewFollower(raft *Raft,WaitHeartBeatMin int, WaitHeartBeatMax int) *Followe
 func (m *Follower) Job(){
 	//m.raft.Wait()
 	m.raft.mu.Unlock()
+	//we choose mutex and share data to synchronization
 	m.WaitHeartBeat()
 	m.raft.mu.Lock()  //这样可以防止在判断完wait后 follower接到了通知，
-	if 	!m.raft.IsReceiveHeartBeat() && !m.raft.HasVoted(){  // it could be a candidate,做这个判断是怕在wait到这里的这个时间段 follower收到了heartbeat
+	if 	!m.raft.IsReceiveHeartBeat(){  // it could be a candidate,做这个判断是怕在wait到这里的这个时间段 follower收到了heartbeat
 		m = m.SetVoteFor( m.raft.me)
 		m.raft.State = NewCandidate(m.raft)
 	} else{
 		m.raft.PrintInfo("ID: " ,m.raft.me ," receive a heartBeat.")
-		m.ChangeHasVoted(false)
 		m.ChangeIsReceiveHeartBeat(false)
 	}
 
