@@ -64,6 +64,9 @@ func(m *Leader)GenerateAppendEntriesArg(currentTerm int, CandidateId int,peer in
 		Entries:  make([]Entries,0),
 	}
 	AppendEntriesArgs.PrevLogIndex = m.nextIndex[peer]-1
+	if AppendEntriesArgs.PrevLogIndex < 0{ //todo
+		AppendEntriesArgs.PrevLogIndex = 0
+	}
 	AppendEntriesArgs.PrevLogTerm = m.raft.log[AppendEntriesArgs.PrevLogIndex].Term
 	AppendEntriesArgs.Entries = m.raft.log[m.nextIndex[peer]:]
 	AppendEntriesArgs.LeaderCommit = m.raft.commitIndex
@@ -193,6 +196,8 @@ func NewLeader(raft *Raft) *Leader{
 		Leader.nextIndex[i] = raft.returnLastLogIndex()+1
 		Leader.matchIndex[i] = 0
 	}
+
+	raft.StartForEmpty("EmptyOp")
 	raft.PrintInfo("ID :",raft.me," become a leader.","term of ID:",raft.me,":",raft.currentTerm)
 	return Leader
 }

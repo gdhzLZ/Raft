@@ -3,10 +3,13 @@ package kvraft
 import (
 	"../labgob"
 	"../labrpc"
-	"log"
 	"../raft"
+	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
+	"syscall"
+	"time"
 )
 
 const Debug = 0
@@ -20,31 +23,85 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 
 
 type Op struct {
+	Key string
+	Value string
+	Type string
+	TaskId   int
+	ClientId int64
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 }
+type CommandOp struct{
+	Data Op
+	Chan chan Op
 
+}
+type ServerToClient struct {
+	err Err
+	value string
+}
 type KVServer struct {
 	mu      sync.Mutex
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
 	dead    int32 // set by Kill()
-
+	kvMap     map[string]string
 	maxraftstate int // snapshot if log grows this big
-
+	clientIdToChan	map[int64] chan ServerToClient
+	maxOpId map[int64]int
 	// Your definitions here.
 }
-
-
-func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+func(kv *KVServer) ClientIdToChan(clientIdandTaskId int64)chan ServerToClient{
+	_,hasKey := kv.clientIdToChan[clientIdandTaskId]
+	if !hasKey{
+		kv.clientIdToChan[clientIdandTaskId] = make(chan ServerToClient)
+	}
+	return kv.clientIdToChan[clientIdandTaskId]
 }
 
-func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+
+func (kv *KVServer) PullRequest(args *RequestArgs, reply *RequestReply) {
+	kv.mu.Lock()
+	op := Op{
+		Type: args.Type,
+		Key: args.Key,
+		Value: args.Value,
+		TaskId:args.TasksId,
+		ClientId: args.ClientId,
+	}
+	commandOp := CommandOp{
+		Data: op,
+	}
+	maxOpId, hasClientRecord := kv.maxOpId[op.ClientId]
+	var ok bool
+	if hasClientRecord && maxOpId >= op.TaskId{
+		ok = kv.rf.State.IsLeader()
+	}else{
+		_,_,ok = kv.rf.Start(commandOp)
+
+	}
+	kv.mu.Unlock()
+	go kv.ApplyToServer()
+	if !ok{
+		reply.Err = ErrWrongLeader
+	}else{
+		kv.mu.Lock()
+		MyCh := kv.ClientIdToChan(op.ClientId+int64(op.TaskId) )
+		kv.mu.Unlock()
+		select {
+		case p := <-MyCh:
+			reply.Err = p.err
+			reply.Value = p.value
+		case <-time.After(1200 * time.Millisecond):
+			reply.Err = TimeOut
+			return
+		}
+	}
 }
+
+
 
 //
 // the tester calls Kill() when a KVServer instance won't
@@ -67,6 +124,58 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
+
+func (kv *KVServer) ApplyToServer(){
+
+	select {
+		case data := <-kv.applyCh:
+			p, ok := data.Command.(CommandOp)
+			if ok{
+				kv.mu.Lock()
+				Chan := kv.ClientIdToChan(p.Data.ClientId + int64(p.Data.TaskId) )// responding client chan
+				reply := ServerToClient{}
+				reply.err = OK
+				maxOpId, hasClientRecord := kv.maxOpId[p.Data.ClientId]
+				if hasClientRecord && maxOpId >= p.Data.TaskId{
+
+					fmt.Println("fffff!!!!!!!!!+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++",p.Data.ClientId,maxOpId,p.Data.TaskId)
+					if p.Data.Type == GetValue{
+						reply.value =  kv.kvMap[p.Data.Key]
+					}else{
+						reply.value = ""
+					}
+					kv.mu.Unlock()
+					Chan <- reply
+					//return
+
+				}else{
+					kv.maxOpId[p.Data.ClientId] = p.Data.TaskId
+					if p.Data.Type == PutValue{
+						kv.kvMap[p.Data.Key] = p.Data.Value
+					}else if p.Data.Type ==AppendValue {
+						last := kv.kvMap[p.Data.Key]
+						last += p.Data.Value
+						kv.kvMap[p.Data.Key] = last
+					}else{
+						value := kv.kvMap[p.Data.Key]
+						reply.value = value
+					}
+					kv.mu.Unlock()
+					Chan <- reply
+				}
+				fmt.Println("great !!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+
+			}else{
+				fmt.Println("type error !!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+				syscall.Exit(2)
+			}
+			fmt.Println("log len", len(kv.rf.GetLog()),"commit index ",kv.rf.GetCommitIndex(),"apply index ",kv.rf.GetApplyIndex())
+
+		//case <-time.After(3000 * time.Millisecond):
+		//	fmt.Println("server to raft timeout !!!!!!!!!!!!!!!!!!!!!!!!!000!!!!")
+		//	return
+	}
+}
 //
 // servers[] contains the ports of the set of
 // servers that will cooperate via Raft to
@@ -84,18 +193,18 @@ func (kv *KVServer) killed() bool {
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(Op{})
 
+	labgob.Register(Op{})
+	labgob.Register(CommandOp{})
+	labgob.Register(ServerToClient{})
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
-
+	kv.kvMap = make(map[string]string)
+	kv.clientIdToChan = make(map[int64]chan ServerToClient)
+	kv.maxOpId = make(map[int64]int)
 	// You may need initialization code here.
-
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
-	// You may need initialization code here.
-
 	return kv
 }

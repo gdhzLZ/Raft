@@ -1,12 +1,17 @@
 package kvraft
 
-import "../labrpc"
+import (
+	"../labrpc"
+	"fmt"
+)
 import "crypto/rand"
 import "math/big"
 
-
 type Clerk struct {
+	lastLeaderId int
+	globalTasksId int
 	servers []*labrpc.ClientEnd
+	myId     int64
 	// You will have to modify this struct.
 }
 
@@ -20,45 +25,88 @@ func nrand() int64 {
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
+	ck.globalTasksId = 0
+	ck.lastLeaderId = 0
+	ck.myId = nrand()
+	fmt.Println("++++++++ create a new clerk +++++++++++",ck.myId)
 	// You'll have to add code here.
 	return ck
 }
 
-//
-// fetch the current value for a key.
-// returns "" if the key does not exist.
-// keeps trying forever in the face of all other errors.
-//
-// you can send an RPC with code like this:
-// ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
-//
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
-//
-func (ck *Clerk) Get(key string) string {
-
-	// You will have to modify this function.
-	return ""
-}
-
-//
-// shared by Put and Append.
-//
-// you can send an RPC with code like this:
-// ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
-//
-// the types of args and reply (including whether they are pointers)
-// must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
-//
-func (ck *Clerk) PutAppend(key string, value string, op string) {
-	// You will have to modify this function.
+func (ck *Clerk) SendRequestRPC(key string, value string,op string) string{
+	serverPeer:=ck.lastLeaderId
+	args := &RequestArgs{
+		TasksId: ck.globalTasksId,
+		Key:     key,
+		Value:   value,
+		Type:    op,
+		ClientId : ck.myId,
+	}
+	reply := &RequestReply{}
+	for {
+		serverPeer = serverPeer % len(ck.servers)
+		ok := ck.servers[serverPeer].Call("KVServer.PullRequest", args, reply)
+		if ok && reply.Err == OK {
+			ck.lastLeaderId = serverPeer
+			fmt.Println("clerk ID ", ck.myId, " Server ID : " ,serverPeer,"task ID",ck.globalTasksId, " right Leader")
+			return reply.Value
+		}
+		if  ok && reply.Err == ErrWrongLeader{
+			fmt.Println("clerk ID ", ck.myId, " Server ID : " ,serverPeer, "task ID",ck.globalTasksId, " ErrWrongLeader")
+		}
+		if  ok && reply.Err == TimeOut{
+			fmt.Println("timeout","clerk ID ", args.ClientId,"task ID",args.TasksId," Leader Id :",serverPeer )
+			//time.Sleep(time.Millisecond * 1000)
+		}
+		if !ok{
+			fmt.Println("rpc error------","clerk ID ", args.ClientId,"task ID",args.TasksId,"rpc server id ",serverPeer )
+		}
+		serverPeer++
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+
+	ck.globalTasksId++
+	fmt.Println("now command , clerk ID : ", ck.myId , " task ID :" ,ck.globalTasksId ," cmd kind : put______________","wantputkey ",key,"wantputvalue",value)
+
+	ck.SendRequestRPC(key, value, "Put")
+	fmt.Println("yes  now command , clerk ID : ", ck.myId , " task ID :" ,ck.globalTasksId ," cmd kind : put________________","key ",key,"putvalue",value)
+	//ck.showMessage()
+
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	ck.globalTasksId++
+	fmt.Println("now command , clerk ID : ", ck.myId , " task ID :" ,ck.globalTasksId ," cmd kind : append_______________","wantappendkey ",key,"wantappendvalue",value)
+	ck.SendRequestRPC(key, value, "Append")
+	fmt.Println("yes  now command , clerk ID : ", ck.myId , " task ID :" ,ck.globalTasksId ," cmd kind : append________________","key ",key,"appendvalue",value)
+	//ck.showMessage()
+
+
+}
+func (ck *Clerk) Get(key string) string {
+	ck.globalTasksId++
+	fmt.Println("now command , clerk ID : ", ck.myId , " task ID :" ,ck.globalTasksId ," cmd kind : get________________","wantgetkey ",key)
+
+	value := ck.SendRequestRPC(key,"",GetValue)
+
+	fmt.Println("yes  now command , clerk ID : ", ck.myId , " task ID :" ,ck.globalTasksId ," cmd kind : get________________","key",key,"getvalue",value)
+	//ck.showMessage()
+	return value
+	// You will have to modify this function.
+}
+func (ck *Clerk) showMessage(){
+	args := &GetArgs{
+
+	}
+	reply := &GetReply{}
+	for i:= 0 ;i < len(ck.servers) ; i++{
+		ok := ck.servers[i].Call("KVServer.Isleader",args,reply)
+		if ok{
+			fmt.Println("server:" ,i, "is leader ?????????????????????????????",reply.Err)
+		}else{
+			fmt.Println("server:" ,i, "is leader ?????????????????????????????  timeout ")
+
+		}
+	}
 }

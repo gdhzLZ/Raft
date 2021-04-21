@@ -28,8 +28,6 @@ import "sync/atomic"
 import "../labrpc"
 import "../labgob"
 
-
-
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -90,7 +88,6 @@ type Raft struct {
 	peerNum		int
 	tasksQueue []Entries
 	taskQueueMu sync.Mutex
-
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -107,7 +104,18 @@ func (rf *Raft) GetState() (int, bool) {
 	// Your code here (2A).
 	return term, isleader
 }
+func (rf *Raft) GetCommitIndex() int{
+	return rf.commitIndex
+}
+func (rf *Raft) GetApplyIndex() int{
+	return rf.lastApplied
+}
+func (rf *Raft)GetLog()[]Entries{
+	return rf.log
+}
+func(rf *Raft) updatePersistentState(){
 
+}
 func (rf *Raft) isLogLatestThanMe(args *RequestVoteArgs) bool{
 	LastLogIndex := rf.returnLastLogIndex()
 	if args.LastLogTerm != (rf.log[LastLogIndex].Term){
@@ -269,14 +277,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Term = rf.currentTerm
 		if rf.IsConsistency(args.PrevLogIndex,args.PrevLogTerm){
 			rf.UpdateLog(args.PrevLogIndex,args.Entries)
-			rf.persist()
 			rf.CommitEntries(args.LeaderCommit)
 			reply.Success = true
 			reply.MyCommitIndex = rf.returnLastLogIndex()
 		}else{
 			reply.Success = false
 		}
-
+		rf.persist()
 	}else{
 		reply.Term = rf.currentTerm
 		reply.Success = false
@@ -345,8 +352,10 @@ func(rf *Raft) taskNumsNotDone()int{
 // term. the third return value is true if this server believes it is
 // the leader.
 //
+/**
+	add command to a wait queue to wait for raft peer to fetch it after the raft has duplicate the current command to a majority of raft peers.
+ */
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if !rf.State.IsLeader() || !rf.IsAlive(){
@@ -359,6 +368,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Term: rf.currentTerm,
 			Command: command,
 		}
+
 		rf.tasksQueue = append(rf.tasksQueue,entry)
 		commandIndex := rf.returnLastLogIndex()+rf.taskNumsNotDone()
 		return commandIndex,rf.currentTerm,true
@@ -366,7 +376,20 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 
 }
+func (rf *Raft) StartForEmpty(command interface{}) (int, int, bool) {
 
+	entry := Entries{
+		Term: rf.currentTerm,
+		Command: command,
+	}
+
+	rf.tasksQueue = append(rf.tasksQueue,entry)
+	commandIndex := rf.returnLastLogIndex()+rf.taskNumsNotDone()
+	return commandIndex,rf.currentTerm,true
+
+
+
+}
 //
 // the tester doesn't halt goroutines created by Raft after each test,
 // but it does call the Kill() method. your code can use killed() to
@@ -415,12 +438,14 @@ func (rf *Raft) IsAlive()bool{
 
 
 
-func Run( rf *Raft){
-	for rf.IsAlive(){
+func Run(applyCh chan ApplyMsg, rf *Raft){
+	for rf.IsAlive() {
 		rf.PrintInfo("My type: ",rf.State.MyType(),"do this job circularly. ID: ", rf.me," term:",rf.currentTerm,"Log: ",rf.log," queue ",rf.tasksQueue,"commitIndex: ",rf.commitIndex," applyindex: ",rf.lastApplied)
 		rf.mu.Lock()
 		rf.State.Job()
 		rf.mu.Unlock()
+		Apply(applyCh,rf)
+
 
 	}
 }
@@ -458,33 +483,41 @@ func InitAServer(peers []*labrpc.ClientEnd, me int,
 	return rf
 }
 //this go routine runs continuously in background to execute command
-func TryApply(applyCh chan ApplyMsg,rf *Raft){
-	for {
-		if !rf.IsAlive(){
-			break
-		}
-		time.Sleep(10*time.Millisecond)
-		rf.mu.Lock()
-
-		if rf.lastApplied < rf.commitIndex{
-			rf.lastApplied++
-			ApplyMsg := ApplyMsg{
-				Command:      rf.log[rf.lastApplied].Command,
-				CommandValid: true,
-				CommandIndex: rf.lastApplied,
-			}
-			applyCh<-ApplyMsg
-			rf.PrintInfo("ID: ",rf.me, " Is it a leader ",rf.State.IsLeader()," applych $$$$$$$$$$  ",ApplyMsg)
+func Apply(applyCh chan ApplyMsg,rf *Raft){
+	rf.mu.Lock()
+	for rf.lastApplied < rf.commitIndex{
+		rf.lastApplied++
+		ApplyMsg := ApplyMsg{
+			Command:      rf.log[rf.lastApplied].Command,
+			CommandValid: true,
+			CommandIndex: rf.lastApplied,
 		}
 		rf.mu.Unlock()
+		p, ok := ApplyMsg.Command.(string)
+		if !ok || (ok && p!="EmptyOp"){
+			applyCh<-ApplyMsg
+			rf.mu.Lock()
+		}else{
+			rf.mu.Lock()
+		}
 
+		//fmt.Println("ID: ",rf.me, " Is it a leader ",rf.State.IsLeader()," applych $$$$$$$$$$  ",ApplyMsg)
+		time.Sleep(1*time.Millisecond)
+		//fmt.Println("hhhhhhhhh,,,,,,,,,,,",rf.lastApplied,rf.commitIndex)
+		//break
 	}
+	rf.mu.Unlock()
+
+	//fmt.Println("LOGLEN222",len(rf.log),"COMMIT",rf.commitIndex,"APPLY",rf.lastApplied,"isleader",rf.State.IsLeader(),"rf id",rf.me,"rf term",rf.currentTerm)
+
 }
+
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
+
 	rf := InitAServer(peers,me,persister,applyCh)
-	go Run(rf)
-	go TryApply(applyCh,rf)
+	go Run(applyCh,rf)
+	//go TryApply(applyCh,rf)
 	// Your initialization code here (2A, 2B, 2C).
 	// initialize from state persisted before a crash
 	//rf.persist()
